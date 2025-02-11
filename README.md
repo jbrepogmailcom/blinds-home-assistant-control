@@ -1,6 +1,6 @@
 # Blinds Brain GPS
 
-This project is an ESPHome-based solution for automating the control of exterior blinds using an ESP32 microcontroller. The system uses various sensors and GPS data to adjust the blinds based on environmental conditions such as light and wind. It is intended to be placed at wesern side of house, where sun sets down. The way it work is that you place light sensor inside room, where you want the shadow to begin. As the sun sets and direct sunlight would enter the room, the blinds drop down until the light sensor detects shadow again. If there is cloudy, blinds are rolled up. If there is wind prediction, blinds are also rolled up.
+This project is an ESPHome-based solution for automating the control of exterior blinds using an ESP32 microcontroller. The system uses various sensors and GPS data to adjust the blinds based on environmental conditions such as light and wind. It is intended to be placed at western side of house, where sun sets down. The way it work is that you place light sensor inside room, where you want the shadow to begin. As the sun sets and direct sunlight would enter the room, the blinds drop down until the light sensor detects shadow again. If there is cloudy, blinds are rolled up. If there is wind prediction, blinds are also rolled up.
 
 The project uses transmitter library to send codes to blinds motor with 433MHz receiver. It sends status and receives commands over mqtt, so can be integrated to Home Assistant.
 
