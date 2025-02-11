@@ -1,0 +1,1 @@
+# blinds-home-assistant-control
