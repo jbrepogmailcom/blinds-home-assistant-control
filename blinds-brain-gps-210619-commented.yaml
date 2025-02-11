@@ -1,0 +1,530 @@
+globals:
+# CONSTANTS
+  - id: bottom_color
+    type: float
+    initial_value: "2.0"
+  - id: top_color
+    type: float
+    initial_value: "1.0"
+  - id: light_threshold
+    type: float
+    initial_value: "20000.0" #"4000" #"20000.0"
+  - id: wind_threshold
+    type: float
+    initial_value: "10.0" #"15.0" #"10.0"
+  - id: max_rolled_out
+    type: int
+    initial_value: "30"
+  # VARIABLES
+  - id: webString
+    type: String
+    restore_value: false
+  - id: current_sun
+    type: boolean
+  - id: last_roll
+    type: unsigned long
+    initial_value: "0"
+  - id: reading_http
+    type: boolean
+    initial_value: "false"
+  - id: cs1_available
+    type: boolean
+    initial_value: "false"
+  - id: is_rolling
+    type: boolean
+    initial_value: "false"
+  - id: rolled_out_s
+    type: int
+    restore_value: false
+    initial_value: "10" # rolled up
+  - id: roll_duration
+    type: unsigned long
+
+esphome:
+  name: blinds-brain-gps
+  #platform: ESP8266
+  platform: ESP32
+  #board: d1_mini_pro
+  board: esp-wrover-kit #ttgo-t1 #esp-wrover-kit #lolin_d32 #esp-wrover-kit #firebeetle32
+  #includes: /home/janbenes/.platformio/packages/framework-arduinoespressif32/libraries/ESPmDNS/src/ESPmDNS.h
+  #includes: /home/janbenes/Documents/test.h
+  includes: /home/janbenes/Documents/blinds_transmitter2.h
+  platformio_options:
+    upload_speed: 921600
+  on_boot:
+#    - priority: 900
+#      then:
+#        lambda: digitalWrite(21, HIGH);
+    - priority: -100
+      then:
+        - logger.log: "Starting rollup (boot)"
+        - lambda: id(is_rolling) = true;
+
+        - switch.turn_on: blinds_down
+        - delay: 1s
+        - switch.turn_off: blinds_down
+        - delay: 1s
+        - switch.turn_on: blinds_up
+        - delay: 1s
+        - switch.turn_off: blinds_up
+        - delay: 1s
+        - lambda: id(is_rolling) = false;
+
+#        - switch.turn_on: blinds_up
+#        - delay: 30s
+#        - switch.turn_off: blinds_up
+#        - logger.log: "Stopping rollup (boot)"
+        - lambda: |-
+            id(is_rolling) = false;
+            id(rolled_out_s) = 10;
+        - component.update: rolled_out
+        - component.update: bh1750_illuminance
+        #- delay: 3min
+        #- component.update: predicted_wind
+
+
+status_led:
+  pin: GPIO2
+  #  number: GPIO2
+  #  inverted: true
+
+wifi:
+  ssid: "IoT"
+  password: "your_wifi_password"
+  #manual_ip:
+  #  static_ip: 10.0.0.253
+  #  gateway: 10.0.0.138
+  #  subnet: 255.255.255.0
+  #  dns1: 8.8.8.8
+  #  dns2: 8.8.4.4
+  fast_connect: true
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Rolety - kontroler"
+    password: ""
+
+uart:
+  rx_pin: GPIO16
+  baud_rate: 9600
+
+gps:
+  id: gps_sat
+  update_interval: 1min
+  latitude:
+    name: "Latitude-gps"
+    id: latitude
+    accuracy_decimals: 2
+    internal: true
+    filters:
+      lambda: |-
+        if (id(gps_locked).state) {
+          return {};
+          }
+        else {
+          return x;
+          }
+    #update_interval: never
+  longitude:
+    name: "Longitude-gps"
+    id: longitude
+    accuracy_decimals: 2
+    internal: true
+    filters:
+      lambda: |-
+        if (id(gps_locked).state) {
+          return {};
+          }
+        else {
+          return x;
+          }
+#  altitude:
+#    name: "Altitude"
+  satellites:
+    name: "Satellites-gps"
+    id: satellites
+    internal: true
+
+
+captive_portal:
+
+# Enable logging
+logger:
+  level: DEBUG #INFO #VERBOSE #WARN #VERBOSE
+  logs:
+    gps: INFO
+    switch: INFO
+    sensor: INFO
+    text_sensor: INFO
+
+# Enable Home Assistant API
+#api:
+
+ota:
+
+i2c:
+  sda: 19
+  scl: 18
+  scan: True
+
+http_request:
+  useragent: esphome/device
+  timeout: 5s #30s
+
+switch:
+  - platform: restart
+    name: "Blinds Brain restart gps"
+  - platform: gpio
+#  - platform: template
+    pin: 26
+    id: blinds_up
+    name: "Blinds Up gps"
+    restore_mode: ALWAYS_OFF
+    interlock: &interlock_group [blinds_up, blinds_down]
+    interlock_wait_time: 0.2s
+    on_turn_on:
+      - lambda: |-
+          id(roll_duration) = millis();
+          sendMarkisolCommand(SHADE_UP_EXAMPLE);
+    on_turn_off:
+      - lambda: |-
+          id(rolled_out_s) = id(rolled_out_s) - ((millis() - id(roll_duration)) / 1000);
+          sendMarkisolCommand(SHADE_STOP_EXAMPLE);
+          delay(200);
+          sendMarkisolCommand(SHADE_STOP_EXAMPLE);
+      - component.update: rolled_out
+  - platform: gpio
+#  - platform: template
+    pin: 25
+    id: blinds_down
+    name: "Blinds Down gps"
+    restore_mode: ALWAYS_OFF
+    interlock: *interlock_group
+    interlock_wait_time: 0.2s
+    on_turn_on:
+      - lambda: |-
+          id(roll_duration) = millis();
+          sendMarkisolCommand(SHADE_DOWN_EXAMPLE);
+    on_turn_off:
+      - lambda: |-
+          id(rolled_out_s) = id(rolled_out_s) + ((millis() - id(roll_duration)) / 1000);
+          sendMarkisolCommand(SHADE_STOP_EXAMPLE);
+          delay(200);
+          sendMarkisolCommand(SHADE_STOP_EXAMPLE);
+      - component.update: rolled_out
+
+text_sensor:
+  - platform: template
+    name: "Last URL gps"
+    id: last_url
+
+  - platform: template
+    name: Uptime Human Readable GPS
+    id: uptime_human
+    icon: mdi:clock-start
+  - platform: template
+    name: "Current time gps"
+    lambda: |-
+      char str[20];
+      time_t currTime = id(sntp_time).now().timestamp;
+      strftime(str, sizeof(str), "%Y-%m-%d %H:%M:%S", localtime(&currTime));
+      ESP_LOGI("main", "Net time: %s", str);
+      return { str };
+    update_interval: 60s #15s
+
+
+sensor:
+#  - platform: gps
+
+  - platform: bh1750
+    name: "BH1750 Illuminance gps"
+    id: bh1750_illuminance
+    #address: 0x23
+    #internal: true
+    measurement_duration: 31
+    update_interval: never #3min #never #10sec
+    on_value:
+      then:
+        - lambda: |-
+            if (id(bh1750_illuminance).state >= id(light_threshold)) id(is_sun).publish_state(true);
+            if (id(bh1750_illuminance).state < id(light_threshold)) id(is_sun).publish_state(false);
+
+  - platform: template
+    name: Rolled out gps
+    id: rolled_out
+    unit_of_measurement: s
+    update_interval: 20min
+    lambda: return id(rolled_out_s);
+
+  - platform: template
+    name: "Predicted wind gps"
+    id: predicted_wind
+    unit_of_measurement: kt
+    update_interval: 45min #never #15min
+    lambda: |-
+      ESP_LOGI("main", "################### Starting to get wind...");
+      ESP_LOGI("main", "################### Satellites %i, Lat: %f, Lon: %f", (int) id(satellites).state, id(latitude).state, id(longitude).state);
+      int i = 200;
+      while (id(reading_http) && (i > 0)) {
+        delay(1000);
+        i--;
+        }
+      id(reading_http)=true;
+      if (!id(gps_locked).state) ESP_LOGI("main", "################### GPS not locked");
+      WiFi.setSleep(false);
+      HTTPClient http;
+      delay(100);
+      http.useHTTP10(true);
+      delay(100);
+      i = 10;
+      while ((WiFi.status() != WL_CONNECTED) && (i > 0)) {
+        ESP_LOGI("main", "################### waiting for wifi...");
+        delay(1000);
+        i--;
+        }
+      ESP_LOGI("main", "################### begin...");
+      String url;
+      if (id(gps_locked).state) {
+        ESP_LOGI("main", "################### GPS lock, parsing weather from GPS position");
+        url = "http://api.openweathermap.org/data/2.5/onecall?lat="+String(id(latitude).state)+"&lon="+String(id(longitude).state)+"&appid=your_api_key&exclude=minutely,daily,alerts";
+        http.begin("http://api.openweathermap.org/data/2.5/onecall?lat="+String(id(latitude).state)+"&lon="+String(id(longitude).state)+"&appid=your_api_key&exclude=minutely,daily,alerts");
+        }
+      else {
+        // Anonymized location:
+        ESP_LOGI("main", "################### No GPS, parsing weather from predefined address (Anonymized Location)");
+        url = "http://api.openweathermap.org/data/2.5/onecall?lat=0.00&lon=0.00&appid=your_api_key&exclude=minutely,daily,alerts";
+        http.begin("http://api.openweathermap.org/data/2.5/onecall?lat=0.00&lon=0.00&appid=your_api_key&exclude=minutely,daily,alerts");
+
+        // Another anonymized location:
+        //ESP_LOGI("main", "################### No GPS, parsing weather from predefined address (Another Anonymized Location)");
+        //url = "http://api.openweathermap.org/data/2.5/onecall?lat=0.00&lon=0.00&appid=your_api_key&exclude=minutely,daily,alerts";
+        //http.begin("http://api.openweathermap.org/data/2.5/onecall?lat=0.00&lon=0.00&appid=your_api_key&exclude=minutely,daily,alerts");
+
+        }
+      char urlch[200];
+      url.toCharArray(urlch,200);
+      id(last_url).publish_state(urlch);
+      float ws = 99.0;
+      ESP_LOGI("main", "################### GET...");
+      delay(100);
+      int status = http.GET();
+      if ((status == 200) && (i>0)) { // && ((id(gps_locked).state))) { //
+        id(lwcs).publish_state(true);
+        delay(100);
+        ESP_LOGI("main", "################### buffer...");
+        DynamicJsonBuffer doc(40000); //31000); //2048);
+        ESP_LOGI("main", "################### parsing...");
+        JsonObject& root = doc.parseObject(http.getStream());
+        ws = float(1.94384 * atof(root["hourly"][0]["wind_speed"].as<char*>()));
+        ws = max(ws, float(1.94384 * atof(root["hourly"][1]["wind_speed"].as<char*>())));
+        ws = max(ws, float(1.94384 * atof(root["hourly"][2]["wind_speed"].as<char*>())));  //max windo value from now to next 2 hrs
+        ESP_LOGI("main", "################### ...done");
+        }
+      else {
+        if (status != 200) ESP_LOGI("main", "################### Could not begin! Status %d, %s",status, urlch);
+        if (!(id(gps_locked).state)) ESP_LOGI("main", "################### No GPS");
+        id(lwcs).publish_state(false);
+        }
+      http.end();
+      id(reading_http)=false;
+      return ws;
+
+  - platform: uptime
+    name: Uptime Sensor gps
+    id: uptime_sensor
+#    internal: true
+    expire_after: 125s
+    update_interval: 60s
+    on_raw_value:
+      then:
+        - text_sensor.template.publish:
+            id: uptime_human
+            state: !lambda |-
+              int seconds = round(id(uptime_sensor).raw_state);
+              int days = seconds / (24 * 3600);
+              seconds = seconds % (24 * 3600);
+              int hours = seconds / 3600;
+              seconds = seconds % 3600;
+              int minutes = seconds /  60;
+              seconds = seconds % 60;
+              return (
+                (days ? String(days) + "d " : "") +
+                (hours ? String(hours) + "h " : "") +
+                (minutes ? String(minutes) + "m " : "") +
+                (String(seconds) + "s")
+              ).c_str();
+
+binary_sensor:
+  - platform: template
+    name: "Last wind check success-gps"
+    id: lwcs
+    device_class: connectivity
+  - platform: template
+    name: GPS Locked gps
+    id: gps_locked
+    lambda: |-
+      //ESP_LOGI("main", "################### BIN sensor check: Satellites %i, Lat: %f, Lon: %f", (int) id(satellites).state, id(latitude).state, id(longitude).state);
+      if ((id(latitude).state >= -90.0) && (id(latitude).state <= 90.0) && (id(longitude).state >= -180.0) && (id(longitude).state <= 180.0) && (id(satellites).state >= 4) && (id(satellites).state <= 100)) {
+        //ESP_LOGI("main", "################### SAT locked");
+        return true;
+        }
+      else {
+        //ESP_LOGI("main", "################### SAT not locked");
+        return false;
+        }
+    on_state:
+      then:
+        - if:
+            condition:
+              binary_sensor.is_on: gps_locked
+            then:
+              component.update: predicted_wind
+
+  - platform: template
+    name: "Is windy gps"
+    id: is_windy
+    device_class: moving
+    lambda: |-
+      return (id(predicted_wind).state > id(wind_threshold));  //#################### Change threshold for wind
+    on_state:
+      then:
+  #      - lambda: id(rolled_out_s) = id(rolled_out_s) + 5;
+        #- component.update: rolled_out
+        #- component.update: predicted_wind
+        - if: # is WINDY
+            condition:
+              and:
+                - binary_sensor.is_on: is_windy
+                - lambda: return (!(id(is_rolling)) && (id(rolled_out_s) > 10)); // ### Bottom edge is green
+            then:
+              - logger.log: "Should start wind rollup"
+              - while:
+                  condition:
+                    - lambda: return (id(rolled_out_s) > 0); // ### Stale vysunuto
+                  then:
+                    #- component.update: received_color1
+                    - lambda: id(is_rolling) = true;
+                    - logger.log: "Starting rollup because windy"
+                    - switch.turn_on: blinds_up
+                    - delay: 2s
+                    - switch.turn_off: blinds_up
+                    #- lambda: id(rolled_out_s) = id(rolled_out_s) - 2;
+                    - component.update: rolled_out
+                    - logger.log: "Stopping rollup (windy)"
+                    - delay: 10s
+              - lambda: |-
+                  id(is_rolling) = false;
+                  id(rolled_out_s) = 10;
+              - component.update: rolled_out
+
+
+  - platform: template
+    name: "Is cloudy delayed gps"
+    id: is_cloudy
+    #device_class: light
+    lambda: |-
+      if (id(bh1750_illuminance).state <= id(light_threshold)) {
+        return true;
+        }
+      else {
+        return false;
+        }
+    filters:
+      - delayed_off: 15min
+      - delayed_on: 3min
+    on_state:
+      then:
+        - if: # If no sun and not rolled up then roll up for 2 sec and wait 10 sec
+            condition:
+              and:
+                - binary_sensor.is_off: is_sun
+                - lambda: return ((id(rolled_out_s) > 10) && !(id(is_rolling)));
+            then:
+              - while:
+                  condition:
+                    and:
+                      - binary_sensor.is_off: is_sun
+                      - lambda: return (id(rolled_out_s) > 0);
+                  then:
+                    #- component.update: received_color1
+                    - lambda: id(is_rolling) = true;
+                    - logger.log: "Starting rollup (no sun)"
+                    - switch.turn_on: blinds_up
+                    - delay: 2s
+                    - switch.turn_off: blinds_up
+                    #- lambda: id(rolled_out_s) = id(rolled_out_s) - 2;
+                    - component.update: rolled_out
+                    - logger.log: "Stopping rollup (no sun)"
+                    - component.update: bh1750_illuminance
+                    - delay: 10s
+              - lambda: |-
+                  id(is_rolling) = false;
+                  id(rolled_out_s) = 10;
+              - component.update: rolled_out
+
+  - platform: template
+    name: "Is sun gps"
+    id: is_sun
+    device_class: light
+    #filters:
+    #  heartbeat: 3min    #filters:
+    #  delayed_on_off: 1min #10min
+    lambda: |-
+      if (id(bh1750_illuminance).state > id(light_threshold)) {   //#################### Change threshold for sun: (sun + blinded_sun)/2
+        id(current_sun) = true;
+        return true;
+        }
+      else {
+        id(current_sun) = false;
+        return false;
+        }
+
+#web_server:
+
+time:
+  - platform: sntp
+    id: sntp_time
+
+interval:
+  - interval: 3min
+    then:
+      - component.update: bh1750_illuminance
+      - if:  # If sunny AND no wind AND not all way down then roll down for 2 sec and wait 10 sec
+          condition:
+            and:
+              - binary_sensor.is_on: is_sun
+              - lambda: return (!(id(is_rolling)));
+              - binary_sensor.is_off: is_windy
+          then:
+            - logger.log: "Blinds can go down"
+            - while:
+                condition:
+                  and:
+                    - binary_sensor.is_on: is_sun
+                    - binary_sensor.is_off: is_windy
+                    - lambda: return (id(rolled_out).state <= id(max_rolled_out));
+                then:
+                  #- component.update: received_color1
+                  - lambda: id(is_rolling) = true;
+                  - logger.log: "Starting rolldown (sunny)"
+                  - switch.turn_on: blinds_down
+                  - delay: 2s
+                  - switch.turn_off: blinds_down
+                  #- lambda: id(rolled_out_s) = id(rolled_out_s) + 2;
+                  - component.update: rolled_out
+                  - logger.log: "Stopping rolldown (sunny)"
+                  - component.update: bh1750_illuminance
+                  - delay: 10s
+            - lambda: id(is_rolling) = false;
+
+mqtt:
+  broker: your_mqtt_broker
+  username: your_mqtt_username
+  password: your_mqtt_password
+  birth_message:
+    topic: mqtt_blinds_brain/status
+    payload:
+    qos: 2
+  will_message:
+    topic: mqtt_blinds_brain/status
+    payload:
